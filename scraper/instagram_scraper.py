@@ -32,9 +32,11 @@ class InstagramScraper:
         export_data(self): configura preferências de exportação.
         wait_and_download(self): aguarda processamento e realiza o download.
         move_and_rename_file(self): renomeia e move o arquivo de download.
+        extraction_routine(self): executa a rotina de extração.
     """
 
-    LOGIN_URL = "https://business.facebook.com"
+    URL_LOGIN = "https://business.facebook.com"
+    URL_INSIGHTS = "https://business.facebook.com/latest/insights/content"
     DOWNLOAD_PATH = os.path.join(os.getcwd(), "temp")
     XPATH_BUTTON_LOGIN_WITH_INSTAGRAM = (
         """//button[contains(text(), 'Log in with Instagram')]"""
@@ -51,9 +53,10 @@ class InstagramScraper:
     XPATH_OPTION_SELECT_ALL = """//div[contains(text(), 'Select all')]"""
     XPATH_OPTION_STORIES = """//div[contains(text(), 'Data for story posts')]"""
     XPATH_BUTTON_GENERATE = """//div[contains(text(), 'Generate')]"""
-    XPATH_FLASH_STATUS = """//div[@data-testid="ContextualLayerRoot"]"""
-    XPATH_FLASH_HEADER = """//div[@role='heading']"""
-    XPATH_BUTTON_DOWNLOAD = """//div[contains(text(), 'Download export')]"""
+    # XPATH_BUTTON_DOWNLOAD = """//div[contains(text(), 'Download export')]"""
+    XPATH_BUTTON_DOWNLOAD = (
+        """//div[contains(text(), 'Download export')]/../../../../../div"""
+    )
 
     def __init__(self, username, password):
         """
@@ -129,33 +132,38 @@ class InstagramScraper:
 
     def login(self):
         """
-        Realiza o login no Instagram.
+        Realiza o login no Bussiness Facebook.
         """
 
-        self.driver.get(self.LOGIN_URL)
+        self.driver.get(self.URL_LOGIN)
         self.get_element(
-            force_waiting=True, xpath=self.XPATH_BUTTON_LOGIN_WITH_INSTAGRAM
+            xpath=self.XPATH_BUTTON_LOGIN_WITH_INSTAGRAM, force_waiting=True
         ).click()
-        self.get_element(xpath=self.XPATH_INPUT_USERNAME).send_keys(self.username)
+        self.get_element(xpath=self.XPATH_INPUT_USERNAME, force_waiting=True).send_keys(
+            self.username
+        )
         self.get_element(xpath=self.XPATH_INPUT_PASSWORD).send_keys(self.password)
         self.get_element(xpath=self.XPATH_BUTTON_LOGIN).click()
         self.get_element(xpath=self.XPATH_CONTAINER_SAVE_INFO, force_waiting=True)
+
+        self.driver.get(self.URL_LOGIN)
+        self.get_element(
+            xpath=self.XPATH_BUTTON_LOGIN_WITH_INSTAGRAM, force_waiting=True
+        ).click()
+        self.get_element(xpath=self.XPATH_ICON_META, force_waiting=True)
 
     def go_to_insights(self):
         """
         Navega para o painel de Insights.
         """
+        self.driver.get(self.URL_INSIGHTS)
 
-        self.driver.get(self.LOGIN_URL)
-        self.get_element(
-            xpath=self.XPATH_BUTTON_LOGIN_WITH_INSTAGRAM, force_waiting=True
-        ).click()
-        self.get_element(xpath=self.XPATH_ICON_META, force_waiting=True)
-        self.driver.get("https://business.facebook.com/latest/insights/content")
-
-    def export_data(self):
+    def export_data(self, option: str):
         """
-        Configura as preferências de exportação.
+        Inicia a rotina de exportação.
+
+        Args:
+            option (str): Tipo de exportação:stories / posts.
         """
 
         self.get_element(force_waiting=True, xpath=self.XPATH_BUTTON_EXPORT).click()
@@ -169,21 +177,10 @@ class InstagramScraper:
             origin_element=element_modal,
         ).click()
 
-        element_combo_accounts = self.get_element(
-            xpath=self.XPATH_COMBO_ACCOUNT, multiple=True
-        )[-1]
-
-        element_combo_accounts.click()
-
-        self.get_element(
-            xpath=self.XPATH_OPTION_SELECT_ALL, origin_element=element_combo_accounts
-        ).click()
-
-        element_combo_accounts.click()
-
-        self.get_element(
-            xpath=self.XPATH_OPTION_STORIES, origin_element=element_combo_accounts
-        ).click()
+        if option == "stories":
+            self.get_element(
+                xpath=self.XPATH_OPTION_STORIES, origin_element=element_modal
+            ).click()
 
         self.get_element(
             xpath=self.XPATH_BUTTON_GENERATE, origin_element=element_modal
@@ -194,36 +191,33 @@ class InstagramScraper:
         Aguarda processamento e realiza o download.
         """
 
-        element_flash_status = self.get_element(
-            xpath=self.XPATH_FLASH_STATUS, force_waiting=True
-        )
-        waiting_time = 0
+        # element_button = self.get_element(xpath=self.XPATH_BUTTON_DOWNLOAD, force_waiting=True)
+
+        elapsed_time = 0
 
         while True:
-            progress_status = (
-                self.get_element(
-                    xpath=self.XPATH_FLASH_HEADER,
-                    origin_element=element_flash_status,
-                    multiple=True,
-                )[2]
-                .find_element(By.XPATH, "./following-sibling::*")
-                .text.split(" • ")[-1]
+            element_button = self.get_element(
+                xpath=self.XPATH_BUTTON_DOWNLOAD,
+                force_waiting=True,
             )
 
-            if progress_status == "100%":
-                print("Concluido")
-                break
+            button_disabled = element_button.get_attribute("aria-disabled")
+
+            if button_disabled == "true":
+                print("Tempo total de espera:", elapsed_time, "segundos")
+                time.sleep(15)
+                elapsed_time += 15
             else:
-                print(f"Aguardando processamento - tempo total {waiting_time}s")
-                waiting_time += 10
-                time.sleep(10)
+                print("Processamento concluído! Realizando download...")
+                element_button.click()
+                break
 
-        self.get_element(xpath=self.XPATH_BUTTON_DOWNLOAD).click()
-        time.sleep(10)
-
-    def move_and_rename_file(self):
+    def move_and_rename_file(self, file_type: str):
         """
-        Renomeia e move o arquivo de download.
+        Move e renomeia o arquivo de download.
+
+        Args:
+            file_type (str): tipo de arquivo: stories / posts.
 
         Raises:
             Exception: caso ocorra algum erro ao mover o arquivo.
@@ -232,7 +226,7 @@ class InstagramScraper:
 
         destination = (
             os.getcwd()
-            + f"\\scraper\\exports\\stories_{date.today().strftime('%m-%d-%Y')}.csv"
+            + f"\\scraper\\exports\\{file_type}_{date.today().strftime('%m-%d-%Y')}.csv"
         )
 
         try:
@@ -240,3 +234,29 @@ class InstagramScraper:
 
         except Exception as e:
             print("Ocorreu um erro ao mover o arquivo:", e)
+
+    def extraction_routine(self):
+        """
+        Executa a rotina de extração.
+        """
+        print("Iniciando extracao")
+        print("Logando")
+        self.login()
+        print("Acessando Insights")
+        self.go_to_insights()
+
+        print("Configurando exportação para stories")
+        self.export_data(option="stories")
+        print("Aguardando processamento e realizando download")
+        self.wait_and_download()
+        print("Movendo e renomeando o arquivo")
+        self.move_and_rename_file(file_type="stories")
+
+        print("Configurando exportação para posts")
+        self.export_data(option="posts")
+        print("Aguardando processamento e realizando download")
+        self.wait_and_download()
+        print("Movendo e renomeando o arquivo")
+        self.move_and_rename_file(file_type="posts")
+
+        print("Extração Finalizada")
